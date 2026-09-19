@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+  <h1>Admin dashboard</h1>
+  <p class="muted">Internal tooling. Each form below intentionally exercises a known vulnerability.</p>
+
+  <h3>Network diagnostic (ping)</h3>
+  <form method="POST" action="{{ url_for('admin_ping') }}">
+    <input name="host" placeholder="127.0.0.1" size="40">
+    <button type="submit">Ping</button>
+  </form>
+
+  <h3>Fetch URL (server-side)</h3>
+  <form method="POST" action="{{ url_for('admin_fetch') }}">
+    <input name="url" placeholder="http://example.com" size="40">
+    <button type="submit">Fetch</button>
+  </form>
+
+  <h3>Import order XML</h3>
+  <form method="POST" action="{{ url_for('admin_import_xml') }}">
+    <textarea name="xml" rows="4" style="width:100%">&lt;order&gt;&lt;note&gt;hello&lt;/note&gt;&lt;/order&gt;</textarea>
+    <button type="submit">Import</button>
+  </form>
+
+  <h3>Restore session blob (pickle)</h3>
+  <form method="POST" action="{{ url_for('admin_restore') }}">
+    <input name="blob" placeholder="hex-encoded pickle" size="60">
+    <button type="submit">Restore</button>
+  </form>
+{% endblock %}

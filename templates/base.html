@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VulnShop — {% block title %}Demo{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    header { border-bottom: 2px solid #eee; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+    header a { margin-right: 1rem; text-decoration: none; color: #06c; }
+    .flash-ok  { background: #e6ffed; padding: 0.5rem; border-left: 4px solid #2c8a3a; }
+    .flash-err { background: #ffeef0; padding: 0.5rem; border-left: 4px solid #c52a2a; }
+    .card { border: 1px solid #ddd; padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; }
+    .muted { color: #777; font-size: 0.9rem; }
+    form.inline { display: inline; }
+    input, textarea { font: inherit; padding: 0.3rem; }
+    button { padding: 0.3rem 0.7rem; cursor: pointer; }
+    .comment { background: #fafafa; padding: 0.4rem; border-radius: 3px; margin: 0.3rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>VulnShop</strong>
+    <a href="{{ url_for('index') }}">Home</a>
+    <a href="{{ url_for('search') }}">Search</a>
+    {% if user %}
+      <a href="{{ url_for('profile') }}">{{ user.username }}</a>
+      {% if user.is_admin %}<a href="{{ url_for('admin_dashboard') }}">Admin</a>{% endif %}
+      <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">Login</a>
+      <a href="{{ url_for('register') }}">Register</a>
+    {% endif %}
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="flash-{{ 'ok' if cat == 'ok' else 'err' }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block content %}
+  <h1>{{ target.username }}{% if target.is_admin %} <span class="muted">(admin)</span>{% endif %}</h1>
+  <p>Email: {{ target.email }}</p>
+  <p>Bio: {{ target.bio }}</p>
+
+  {% if user and user.id == target.id %}
+    <h3>Update profile</h3>
+    <form method="POST" action="{{ url_for('profile_update') }}">
+      <p><label>Email <input name="email" value="{{ user.email }}"></label></p>
+      <p><label>Bio <textarea name="bio" rows="3">{{ user.bio }}</textarea></label></p>
+      <button type="submit">Save</button>
+    </form>
+
+    <h3>Upload avatar</h3>
+    <form method="POST" action="{{ url_for('upload_avatar') }}" enctype="multipart/form-data">
+      <input type="file" name="avatar">
+      <button type="submit">Upload</button>
+    </form>
+
+    <h3>Transfer funds</h3>
+    <form method="POST" action="{{ url_for('transfer') }}">
+      <p><label>To user id <input name="to" value="4"></label></p>
+      <p><label>Amount <input name="amount" value="10"></label></p>
+      <button type="submit">Send</button>
+    </form>
+  {% endif %}
+{% endblock %}

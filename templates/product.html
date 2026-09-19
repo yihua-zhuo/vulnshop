@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ product.name }}{% endblock %}
+{% block content %}
+  <h1>{{ product.name }}</h1>
+  <p>${{ product.price }}</p>
+  <p>{{ product.description }}</p>
+
+  <h3>Reviews</h3>
+  {% for c in comments %}
+    <div class="comment">
+      <b>{{ c.username }}</b>
+      <span class="muted">{{ c.created_at }}</span>
+      <div>{{ c.content|safe }}</div>
+    </div>
+  {% endfor %}
+
+  {% if user %}
+    <h4>Leave a review</h4>
+    <form method="POST" action="{{ url_for('add_comment') }}">
+      <input type="hidden" name="product_id" value="{{ product.id }}">
+      <textarea name="content" rows="3" style="width:100%"></textarea>
+      <button type="submit">Post</button>
+    </form>
+  {% else %}
+    <p><a href="{{ url_for('login') }}">Log in</a> to leave a review.</p>
+  {% endif %}
+{% endblock %}
