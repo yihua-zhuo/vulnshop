@@ -96,10 +96,10 @@ def login():
 
         conn = get_conn()
         query = (
-            f"SELECT * FROM users WHERE username = '{username}' "
-            f"AND password_hash = '{weak_hash(password)}'"
+            "SELECT * FROM users WHERE username = ? "
+            "AND password_hash = ?"
         )
-        row = conn.execute(query).fetchone()
+        row = conn.execute(query, (username, weak_hash(password))).fetchone()
         conn.close()
 
         if row:
