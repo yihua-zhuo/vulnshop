@@ -1,12 +1,18 @@
 import os
-import pickle
+import json
+import secrets
+import socket
+import ipaddress
+import http.client
+import stat
+import re
+from decimal import Decimal, InvalidOperation
 import subprocess
 import sqlite3
-import hashlib
+from werkzeug.security import generate_password_hash, check_password_hash
 import xml.etree.ElementTree as ET
 
 from xml.parsers.expat import ParserCreate as _ExpatCreate
-from urllib.request import urlopen
 from urllib.parse import urlparse
 
 from flask import (
@@ -19,7 +25,8 @@ from db import get_conn, init_db, DB_PATH
 
 app = Flask(__name__)
 
-app.secret_key = "secret123"
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(MAX_CONTENT_LENGTH=2 * 1024 * 1024, SESSION_COOKIE_SAMESITE="Lax")
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "files")
@@ -27,10 +34,48 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def weak_hash(pw: str) -> str:
-    return hashlib.md5(pw.encode()).hexdigest()
+    return generate_password_hash(pw)
 
 def current_user():
-    return session.get("user")
+    uid = session.get("user_id")
+    if not isinstance(uid, int):
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, username, email, bio, avatar_path, is_admin FROM users WHERE id = ?",
+            (uid,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+@app.before_request
+def protect_requests():
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        if request.headers.get("Sec-Fetch-Site") == "cross-site":
+            abort(403)
+        source = request.headers.get("Origin") or request.headers.get("Referer", "")
+        try:
+            parsed = urlparse(source)
+            expected = urlparse(request.host_url)
+            if (parsed.scheme, parsed.netloc) != (expected.scheme, expected.netloc):
+                abort(403)
+        except ValueError:
+            abort(403)
+    if request.endpoint == "static":
+        name = request.view_args.get("filename", "")
+        if any(part in ("", ".", "..") for part in name.split("/")):
+            abort(404)
+        if name.startswith("uploads/"):
+            return send_from_directory(
+                UPLOAD_DIR, name[len("uploads/"):], as_attachment=True,
+                mimetype="application/octet-stream",
+            )
+        if name not in (
+            "files/price-list.txt", "files/warranty.txt"
+        ):
+            abort(404)
 
 def login_required(view):
     from functools import wraps
@@ -95,23 +140,26 @@ def login():
         password = request.form.get("password", "")
 
         conn = get_conn()
-        query = (
-            f"SELECT * FROM users WHERE username = '{username}' "
-            f"AND password_hash = '{weak_hash(password)}'"
-        )
-        row = conn.execute(query).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         conn.close()
 
-        if row:
-            session["user"] = dict(row)
+        if row and check_password_hash(row["password_hash"], password):
+            session.clear()
+            session["user_id"] = row["id"]
             flash(f"Welcome back, {row['username']}!", "ok")
             return redirect(url_for("index"))
         flash("Invalid credentials.", "err")
     return render_template("login.html", user=current_user())
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
-    session.pop("user", None)
+    if request.method in ("GET", "HEAD"):
+        return render_template_string(
+            "{% extends 'base.html' %}{% block content %}"
+            '<form method="POST"><button type="submit">Confirm logout</button></form>'
+            "{% endblock %}", user=current_user(),
+        )
+    session.clear()
     return redirect(url_for("index"))
 
 @app.route("/search")
@@ -120,18 +168,20 @@ def search():
     results = []
     if q:
         conn = get_conn()
-        query = f"SELECT id, name, description, price FROM products " \
-                f"WHERE name LIKE '%{q}%' OR description LIKE '%{q}%'"
         try:
-            results = conn.execute(query).fetchall()
-        except sqlite3.OperationalError as e:
-            return Response(f"SQL error: {e}", mimetype="text/plain"), 500
-        conn.close()
+            results = conn.execute(
+                "SELECT id, name, description, price FROM products "
+                "WHERE name LIKE ? OR description LIKE ?", (f"%{q}%", f"%{q}%"),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return Response("Search unavailable.", mimetype="text/plain"), 500
+        finally:
+            conn.close()
 
     html = render_template_string(
         "{% extends 'base.html' %}"
         "{% block content %}"
-        "<h2>Search results for: {{ q|safe }}</h2>"
+        "<h2>Search results for: {{ q }}</h2>"
         "<p>{{ results|length }} match(es).</p>"
         "<ul>"
         "{% for r in results %}<li><b>{{ r.name }}</b> — {{ r.description }} (${{ r.price }})</li>{% endfor %}"
@@ -178,12 +228,13 @@ def add_comment():
 @app.route("/profile")
 @app.route("/profile/<int:uid>")
 def profile(uid=None):
+    u = current_user()
+    if not u:
+        return redirect(url_for("login"))
+    if uid is not None and uid != u["id"]:
+        abort(403)
+    uid = u["id"]
     conn = get_conn()
-    if uid is None:
-        u = current_user()
-        if not u:
-            return redirect(url_for("login"))
-        uid = u["id"]
     target = conn.execute(
         "SELECT id, username, email, bio, avatar_path, is_admin FROM users WHERE id = ?",
         (uid,),
@@ -199,7 +250,7 @@ def profile_update():
     if not u:
         return redirect(url_for("login"))
 
-    _WHITELIST = ("bio", "email", "is_admin")
+    _WHITELIST = ("bio", "email")
     updates = {k: v for k, v in request.form.items() if k in _WHITELIST}
     if not updates:
         flash("Nothing to update.", "err")
@@ -213,10 +264,6 @@ def profile_update():
     conn.commit()
     conn.close()
 
-    row = dict(u)
-    for k, v in updates.items():
-        row[k] = int(v) if k == "is_admin" else v
-    session["user"] = row
     flash("Profile updated.", "ok")
     return redirect(url_for("profile"))
 
@@ -225,20 +272,46 @@ def transfer():
     u = current_user()
     if not u:
         return redirect(url_for("login"))
-    to_id = request.form.get("to", "")
-    amount = float(request.form.get("amount", "0") or 0)
+    try:
+        to_id = int(request.form.get("to", ""))
+        amount = Decimal(request.form.get("amount", ""))
+        if (not amount.is_finite() or amount <= 0 or amount > Decimal("1000000000")
+                or amount != amount.quantize(Decimal("0.01")) or to_id == u["id"]):
+            abort(400)
+    except (ValueError, InvalidOperation):
+        abort(400)
 
     conn = get_conn()
-    conn.execute(
-        "UPDATE orders SET amount = amount - ? WHERE user_id = ? AND status = 'paid'",
-        (amount, u["id"]),
-    )
-    conn.execute(
-        "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, 'paid')",
-        (to_id, amount),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT id FROM users WHERE id = ?", (to_id,)).fetchone():
+            abort(400)
+        orders = conn.execute(
+            "SELECT id, amount FROM orders WHERE user_id = ? AND status = 'paid' ORDER BY id",
+            (u["id"],),
+        ).fetchall()
+        balances = [(r["id"], Decimal(str(r["amount"]))) for r in orders]
+        if any(not value.is_finite() or value < 0 or value > Decimal("1000000000") or value != value.quantize(Decimal("0.01"))
+               for _, value in balances):
+            abort(400)
+        if sum((value for _, value in balances), Decimal(0)) < amount:
+            abort(400)
+        remaining = amount
+        for order_id, balance in balances:
+            debit = min(balance, remaining)
+            if debit:
+                conn.execute("UPDATE orders SET amount = ? WHERE id = ?",
+                             (float(balance - debit), order_id))
+                remaining -= debit
+            if not remaining:
+                break
+        conn.execute(
+            "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, 'paid')",
+            (to_id, float(amount)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     flash(f"Transferred ${amount} to user {to_id}.", "ok")
     return redirect(url_for("profile"))
 
@@ -252,8 +325,9 @@ def upload_avatar():
         flash("No file.", "err")
         return redirect(url_for("profile"))
 
-    saved_name = f.filename
-    f.save(os.path.join(UPLOAD_DIR, saved_name))
+    saved_name = secrets.token_hex(16) + ".bin"
+    with open(os.path.join(UPLOAD_DIR, saved_name), "xb") as destination:
+        f.save(destination)
 
     conn = get_conn()
     conn.execute(
@@ -268,14 +342,26 @@ def upload_avatar():
 @app.route("/download")
 def download():
     name = request.args.get("file", "")
-    full = os.path.join(DOWNLOAD_DIR, name)
-    with open(full, "rb") as fh:
-        data = fh.read()
+    if name not in ("price-list.txt", "warranty.txt"):
+        abort(404)
+    try:
+        fd = os.open(os.path.join(DOWNLOAD_DIR, name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as fh:
+            info = os.fstat(fh.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                abort(413)
+            data = fh.read(1024 * 1024 + 1)
+            if len(data) > 1024 * 1024:
+                abort(413)
+    except OSError:
+        abort(404)
     return Response(data, mimetype="application/octet-stream")
 
 @app.route("/redirect")
 def go():
     target = request.args.get("url", "/")
+    if not target.startswith("/") or target.startswith("//") or "\\" in target or any(ord(c) < 32 for c in target):
+        abort(400)
     return redirect(target)
 
 @app.route("/admin")
@@ -289,23 +375,57 @@ def admin_dashboard():
 @admin_required
 def admin_ping():
     host = request.form.get("host", "")
-    out = subprocess.run(
-        f"ping -c 1 {host}", shell=True, capture_output=True, text=True
-    )
-    return Response(
-        f"<pre>STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}</pre>",
-        mimetype="text/html",
-    )
+    try:
+        host = str(ipaddress.ip_address(host))
+    except ValueError:
+        if len(host) > 253 or not all(
+            re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+            for label in host.rstrip(".").split(".")
+        ):
+            abort(400)
+    try:
+        out = subprocess.run(
+            ["ping", "-c", "1", host], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return Response("Ping failed.", status=502, mimetype="text/plain")
+    return Response(f"STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}", mimetype="text/plain")
 
 @app.route("/admin/fetch", methods=["POST"])
 @login_required
 @admin_required
 def admin_fetch():
     url = request.form.get("url", "")
+    conn = None
     try:
-        body = urlopen(url, timeout=3).read(64 * 1024)
-    except Exception as e:
-        body = f"ERROR: {e}".encode()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            abort(400)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+        ips = [ipaddress.ip_address(a[4][0]) for a in addresses]
+        if not ips or any(not ip.is_global or ip.is_multicast or ip.is_reserved for ip in ips):
+            abort(400)
+        address = addresses[0][4][0]
+        cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        conn = cls(parsed.hostname, port, timeout=3)
+        # Pin the checked address while retaining the hostname for TLS verification and Host.
+        conn._create_connection = lambda endpoint, timeout, source_address=None: socket.create_connection(
+            (address, port), timeout, source_address
+        )
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        conn.request("GET", path)
+        response = conn.getresponse()
+        if 300 <= response.status < 400:
+            abort(400)
+        body = response.read(64 * 1024)
+    except (ValueError, OSError, http.client.HTTPException):
+        return Response("Fetch failed.", status=502, mimetype="text/plain")
+    finally:
+        if conn:
+            conn.close()
     return Response(body, mimetype="text/plain")
 
 @app.route("/admin/import-xml", methods=["POST"])
@@ -316,17 +436,13 @@ def admin_import_xml():
     leaked = []
     def _characters(data):
         leaked.append(data)
-    def _resolve_external(ctx, base, sysid, pubid):
-        if sysid.startswith("file:///"):
-            try:
-                with open(sysid[7:], "r", errors="replace") as f:
-                    leaked.append(f.read())
-            except OSError:
-                pass
-        return 1
+    def _reject_declaration(*args):
+        raise ValueError("DTD and entity declarations are not allowed")
     parser = _ExpatCreate()
     parser.CharacterDataHandler = _characters
-    parser.ExternalEntityRefHandler = _resolve_external
+    parser.StartDoctypeDeclHandler = _reject_declaration
+    parser.EntityDeclHandler = _reject_declaration
+    parser.ExternalEntityRefHandler = _reject_declaration
     try:
         parser.Parse(payload.encode(), True)
         note = "".join(leaked).strip()
@@ -341,7 +457,7 @@ def admin_import_xml():
 def admin_restore():
     blob = request.form.get("blob", "")
     try:
-        data = pickle.loads(bytes.fromhex(blob))
+        data = json.loads(blob)
         flash(f"Restored object: {data!r}", "ok")
     except Exception as e:
         flash(f"Restore failed: {e}", "err")
@@ -350,13 +466,16 @@ def admin_restore():
 @app.errorhandler(500)
 def err_500(e):
     return Response(
-        f"<h1>Server error</h1><pre>{e}</pre>", status=500, mimetype="text/html"
+        "<h1>Server error</h1>", status=500, mimetype="text/html"
     )
 
 @app.after_request
 def add_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    if request.endpoint == "static" and request.view_args.get("filename", "").startswith("uploads/"):
+        resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
     return resp
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)
