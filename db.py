@@ -5,7 +5,6 @@ import hashlib
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
 
 DB_ADMIN_USER = "admin"
-DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -13,6 +12,9 @@ def get_conn():
     return conn
 
 def init_db():
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    if not admin_password or not admin_password.strip():
+        raise RuntimeError("ADMIN_PASSWORD must be set to initialize the database")
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_conn()
     cur = conn.cursor()
@@ -62,7 +64,7 @@ def init_db():
         return hashlib.md5(pw.encode()).hexdigest()
 
     seed_users = [
-        ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
+        ("admin",   admin_password,   "[email protected]",  "Site administrator", 1),
         ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
         ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
         ("charlie", "password",       "[email protected]", "Charlie",             0),
@@ -97,4 +99,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print(f"[+] Database initialized at {DB_PATH}")
-    print(f"[!] Hardcoded admin password in source: {DB_ADMIN_PASSWORD}")
