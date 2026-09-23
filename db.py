@@ -1,11 +1,12 @@
 import sqlite3
 import os
-import hashlib
+import secrets
+from werkzeug.security import generate_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
 
 DB_ADMIN_USER = "admin"
-DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
+DB_ADMIN_PASSWORD = os.environ.get("DB_ADMIN_PASSWORD")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -19,12 +20,7 @@ def init_db():
 
     cur.executescript(
         """
-        DROP TABLE IF EXISTS users;
-        DROP TABLE IF EXISTS products;
-        DROP TABLE IF EXISTS comments;
-        DROP TABLE IF EXISTS orders;
-
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
@@ -34,14 +30,14 @@ def init_db():
             is_admin INTEGER DEFAULT 0
         );
 
-        CREATE TABLE products (
+        CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             description TEXT,
             price REAL NOT NULL
         );
 
-        CREATE TABLE comments (
+        CREATE TABLE IF NOT EXISTS comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
@@ -49,7 +45,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE TABLE orders (
+        CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             amount REAL NOT NULL,
@@ -59,15 +55,23 @@ def init_db():
     )
 
     def weak_hash(pw: str) -> str:
-        return hashlib.md5(pw.encode()).hexdigest()
+        return generate_password_hash(pw)
 
     seed_users = [
-        ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
-        ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
-        ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
-        ("charlie", "password",       "[email protected]", "Charlie",             0),
+        ("admin",   DB_ADMIN_PASSWORD or secrets.token_urlsafe(32),       "[email protected]",  "Site administrator", 1),
+        ("alice",   secrets.token_urlsafe(32),      "[email protected]", "Hi I'm Alice",        0),
+        ("bob",     secrets.token_urlsafe(32),            "[email protected]",    "Bob's bio",           0),
+        ("charlie", secrets.token_urlsafe(32),       "[email protected]", "Charlie",             0),
     ]
-    for username, pw, email, bio, is_admin in seed_users:
+    # Legacy MD5 credentials cannot be safely retained; invalidate them on initialization.
+    for row in cur.execute("SELECT id, username, password_hash FROM users").fetchall():
+        if len(row["password_hash"]) == 32:
+            cur.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                        (weak_hash(DB_ADMIN_PASSWORD if row["username"] == DB_ADMIN_USER and DB_ADMIN_PASSWORD
+                                    else secrets.token_urlsafe(32)), row["id"]))
+
+    fresh_users = not cur.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+    for username, pw, email, bio, is_admin in seed_users if fresh_users else []:
         cur.execute(
             "INSERT INTO users (username, password_hash, email, bio, is_admin) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -80,16 +84,17 @@ def init_db():
         ("Coffee Beans 500g", "Single-origin Ethiopian Yirgacheffe.", 24.5),
         ("Notebook", "Hardcover, dotted, 200 pages.", 18.0),
     ]
-    for name, desc, price in seed_products:
+    for name, desc, price in seed_products if not cur.execute("SELECT 1 FROM products LIMIT 1").fetchone() else []:
         cur.execute(
             "INSERT INTO products (name, description, price) VALUES (?, ?, ?)",
             (name, desc, price),
         )
 
-    cur.execute(
-        "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)",
-        (2, 1000.0, "paid"),
-    )
+    if fresh_users:
+        cur.execute(
+            "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)",
+            (2, 1000.0, "paid"),
+        )
 
     conn.commit()
     conn.close()
@@ -97,4 +102,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print(f"[+] Database initialized at {DB_PATH}")
-    print(f"[!] Hardcoded admin password in source: {DB_ADMIN_PASSWORD}")

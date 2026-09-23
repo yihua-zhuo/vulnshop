@@ -22,9 +22,9 @@
     <button type="submit">Import</button>
   </form>
 
-  <h3>Restore session blob (pickle)</h3>
+  <h3>Restore session data (JSON)</h3>
   <form method="POST" action="{{ url_for('admin_restore') }}">
-    <input name="blob" placeholder="hex-encoded pickle" size="60">
+    <input name="blob" placeholder="JSON data" size="60">
     <button type="submit">Restore</button>
   </form>
 {% endblock %}
