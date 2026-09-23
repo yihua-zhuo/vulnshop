@@ -120,10 +120,10 @@ def search():
     results = []
     if q:
         conn = get_conn()
-        query = f"SELECT id, name, description, price FROM products " \
-                f"WHERE name LIKE '%{q}%' OR description LIKE '%{q}%'"
+        query = "SELECT id, name, description, price FROM products " \
+                "WHERE name LIKE ? OR description LIKE ?"
         try:
-            results = conn.execute(query).fetchall()
+            results = conn.execute(query, (f"%{q}%", f"%{q}%")).fetchall()
         except sqlite3.OperationalError as e:
             return Response(f"SQL error: {e}", mimetype="text/plain"), 500
         conn.close()
