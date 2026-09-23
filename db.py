@@ -1,6 +1,7 @@
 import sqlite3
 import os
-import hashlib
+import re
+from werkzeug.security import generate_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
 
@@ -10,6 +11,19 @@ DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS login_attempts "
+        "(key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, expires INTEGER NOT NULL)"
+    )
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone():
+        for row in conn.execute("SELECT id, password_hash FROM users WHERE length(password_hash) = 32").fetchall():
+            if re.fullmatch(r"[0-9a-f]{32}", row["password_hash"]):
+                conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?",
+                    ("legacy-md5$" + generate_password_hash(row["password_hash"]),
+                     row["id"], row["password_hash"]),
+                )
+    conn.commit()
     return conn
 
 def init_db():
@@ -58,9 +72,6 @@ def init_db():
         """
     )
 
-    def weak_hash(pw: str) -> str:
-        return hashlib.md5(pw.encode()).hexdigest()
-
     seed_users = [
         ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
         ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
@@ -71,7 +82,7 @@ def init_db():
         cur.execute(
             "INSERT INTO users (username, password_hash, email, bio, is_admin) "
             "VALUES (?, ?, ?, ?, ?)",
-            (username, weak_hash(pw), email, bio, is_admin),
+            (username, generate_password_hash(pw), email, bio, is_admin),
         )
 
     seed_products = [
