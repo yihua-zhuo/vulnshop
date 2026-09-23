@@ -1,6 +1,6 @@
 import sqlite3
 import os
-import hashlib
+from werkzeug.security import generate_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
 
@@ -10,6 +10,12 @@ DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone():
+        for row in conn.execute("SELECT id, password_hash FROM users WHERE length(password_hash) = 32").fetchall():
+            old = row["password_hash"]
+            if all(c in "0123456789abcdef" for c in old):
+                conn.execute("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?", ("md5$" + generate_password_hash(old), row["id"], old))
+        conn.commit()
     return conn
 
 def init_db():
@@ -59,7 +65,7 @@ def init_db():
     )
 
     def weak_hash(pw: str) -> str:
-        return hashlib.md5(pw.encode()).hexdigest()
+        return generate_password_hash(pw)
 
     seed_users = [
         ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
