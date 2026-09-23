@@ -13,6 +13,9 @@ def get_conn():
     return conn
 
 def init_db():
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    if not admin_password or admin_password == "admin123":
+        raise RuntimeError("Set ADMIN_PASSWORD to a new, private password before initializing the database.")
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_conn()
     cur = conn.cursor()
@@ -62,7 +65,7 @@ def init_db():
         return hashlib.md5(pw.encode()).hexdigest()
 
     seed_users = [
-        ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
+        ("admin",   admin_password,   "[email protected]",  "Site administrator", 1),
         ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
         ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
         ("charlie", "password",       "[email protected]", "Charlie",             0),

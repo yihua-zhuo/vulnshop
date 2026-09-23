@@ -102,7 +102,7 @@ def login():
         row = conn.execute(query).fetchone()
         conn.close()
 
-        if row:
+        if row and not (row["is_admin"] and row["password_hash"] == weak_hash("admin123")):
             session["user"] = dict(row)
             flash(f"Welcome back, {row['username']}!", "ok")
             return redirect(url_for("index"))
