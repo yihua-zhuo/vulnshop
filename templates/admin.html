@@ -2,7 +2,7 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
   <h1>Admin dashboard</h1>
-  <p class="muted">Internal tooling. Each form below intentionally exercises a known vulnerability.</p>
+  <p class="muted">Internal tooling.</p>
 
   <h3>Network diagnostic (ping)</h3>
   <form method="POST" action="{{ url_for('admin_ping') }}">
@@ -22,9 +22,9 @@
     <button type="submit">Import</button>
   </form>
 
-  <h3>Restore session blob (pickle)</h3>
+  <h3>Restore session data (JSON)</h3>
   <form method="POST" action="{{ url_for('admin_restore') }}">
-    <input name="blob" placeholder="hex-encoded pickle" size="60">
+    <input name="blob" placeholder="JSON data" size="60">
     <button type="submit">Restore</button>
   </form>
 {% endblock %}
