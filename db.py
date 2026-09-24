@@ -1,11 +1,12 @@
 import sqlite3
 import os
-import hashlib
+import secrets
+from werkzeug.security import generate_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
 
 DB_ADMIN_USER = "admin"
-DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
+DB_ADMIN_PASSWORD = os.environ.get("DB_ADMIN_PASSWORD")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -58,20 +59,18 @@ def init_db():
         """
     )
 
-    def weak_hash(pw: str) -> str:
-        return hashlib.md5(pw.encode()).hexdigest()
-
+    admin_password = DB_ADMIN_PASSWORD or secrets.token_urlsafe(32)
     seed_users = [
-        ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
-        ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
-        ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
-        ("charlie", "password",       "[email protected]", "Charlie",             0),
+        ("admin",   admin_password,       "[email protected]",  "Site administrator", 1),
+        ("alice",   secrets.token_urlsafe(32),      "[email protected]", "Hi I'm Alice",        0),
+        ("bob",     secrets.token_urlsafe(32),            "[email protected]",    "Bob's bio",           0),
+        ("charlie", secrets.token_urlsafe(32),       "[email protected]", "Charlie",             0),
     ]
     for username, pw, email, bio, is_admin in seed_users:
         cur.execute(
             "INSERT INTO users (username, password_hash, email, bio, is_admin) "
             "VALUES (?, ?, ?, ?, ?)",
-            (username, weak_hash(pw), email, bio, is_admin),
+            (username, generate_password_hash(pw), email, bio, is_admin),
         )
 
     seed_products = [
@@ -93,8 +92,9 @@ def init_db():
 
     conn.commit()
     conn.close()
+    if not DB_ADMIN_PASSWORD:
+        print(f"Initial administrator password: {admin_password}")
 
 if __name__ == "__main__":
     init_db()
     print(f"[+] Database initialized at {DB_PATH}")
-    print(f"[!] Hardcoded admin password in source: {DB_ADMIN_PASSWORD}")
