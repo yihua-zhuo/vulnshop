@@ -1,0 +1,9 @@
+{
+  "image": "python:3.12-slim",
+  "setup": "pip install --quiet --target=/work/.deps -r requirements.txt pytest",
+  "test": "PYTHONPATH=/work/.deps python3 -m pytest -q",
+  "mayWrite": [
+    "tests/**",
+    "pytest.ini"
+  ]
+}
