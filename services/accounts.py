@@ -10,6 +10,4 @@ def preferences(raw):
 
 def session_identity(row):
     identity = {key: row[key] for key in ("id", "username", "email", "bio", "is_admin")}
-    settings = preferences(row["preferences"])
-    identity.update(settings.get("account", {}))
     return identity

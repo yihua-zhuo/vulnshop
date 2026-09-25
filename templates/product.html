@@ -30,6 +30,7 @@
   {% if user %}
     <h4>Leave a review</h4>
     <form method="POST" action="{{ url_for('add_comment') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
       <input type="hidden" name="product_id" value="{{ product.id }}">
       <textarea name="content" rows="3" style="width:100%"></textarea>
       <button type="submit">Post</button>

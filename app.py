@@ -1,11 +1,17 @@
 import os
-import pickle
+import json
+import ipaddress
+import socket
+import re
+from contextlib import closing
+from decimal import Decimal, InvalidOperation
+from http.client import HTTPConnection, HTTPSConnection
 import subprocess
 import sqlite3
 import secrets
 
 from xml.parsers.expat import ParserCreate as _ExpatCreate
-from urllib.request import urlopen
+from urllib.parse import urlsplit
 
 from flask import (
     Flask, request, redirect, url_for, session,
@@ -26,6 +32,8 @@ app = Flask(__name__)
 app.register_blueprint(storefront)
 app.register_blueprint(reports)
 
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+
 app.secret_key = os.environ.get("SHOP_SECRET_KEY") or secrets.token_hex(32)
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
@@ -34,7 +42,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def current_user():
-    return session.get("user")
+    uid = session.get("_customer_id")
+    if uid is None:
+        return None
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    return session_identity(row) if row else None
 
 def login_required(view):
     from functools import wraps
@@ -54,6 +67,17 @@ def admin_required(view):
             abort(403)
         return view(*args, **kwargs)
     return wrapped
+
+@app.before_request
+def legacy_csrf():
+    if request.method == "POST" and request.endpoint in {
+        "add_comment", "profile_update", "transfer", "upload_avatar",
+        "save_catalog_view", "admin_ping", "admin_fetch", "admin_import_xml", "admin_restore",
+    }:
+        token = session.get("_shopping_csrf")
+        supplied = request.form.get("csrf_token", "")
+        if not token or not secrets.compare_digest(token.encode(), supplied.encode()):
+            abort(400)
 
 @app.route("/")
 def index():
@@ -174,7 +198,11 @@ def add_comment():
 
 @app.route("/profile")
 @app.route("/profile/<int:uid>")
+@login_required
 def profile(uid=None):
+    u = current_user()
+    if uid is not None and uid != u["id"] and not u["is_admin"]:
+        abort(403)
     conn = get_conn()
     if uid is None:
         u = current_user()
@@ -231,20 +259,38 @@ def transfer():
     u = current_user()
     if not u:
         return redirect(url_for("login"))
-    to_id = request.form.get("to", "")
-    amount = float(request.form.get("amount", "0") or 0)
+    try:
+        to_id = int(request.form.get("to", ""))
+        amount = Decimal(request.form.get("amount", "0"))
+        if not amount.is_finite() or not 0 < amount <= Decimal("1000000") or amount != amount.quantize(Decimal("0.01")):
+            abort(400)
+        if not 1 <= to_id <= 2147483647 or to_id == u["id"]:
+            abort(400)
+    except (ValueError, InvalidOperation):
+        abort(400)
 
-    conn = get_conn()
-    conn.execute(
-        "UPDATE orders SET amount = amount - ? WHERE user_id = ? AND status = 'paid'",
-        (amount, u["id"]),
-    )
-    conn.execute(
-        "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, 'paid')",
-        (to_id, amount),
-    )
-    conn.commit()
-    conn.close()
+    with closing(get_conn()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT id FROM users WHERE id = ?", (to_id,)).fetchone() is None:
+            abort(400)
+        balances = conn.execute(
+            "SELECT id, amount FROM orders WHERE user_id = ? AND status = 'paid' AND amount > 0 ORDER BY id",
+            (u["id"],),
+        ).fetchall()
+        funds = [(row["id"], Decimal(str(row["amount"])).quantize(Decimal("0.01"))) for row in balances]
+        if sum(balance for _, balance in funds) < amount:
+            abort(400)
+        remaining = amount
+        for oid, balance in funds:
+            debit = min(balance, remaining)
+            conn.execute("UPDATE orders SET amount = ? WHERE id = ?", (float(balance - debit), oid))
+            remaining -= debit
+            if remaining == 0:
+                break
+        conn.execute(
+            "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, 'paid')",
+            (to_id, float(amount)),
+        )
     flash(f"Transferred ${amount} to user {to_id}.", "ok")
     return redirect(url_for("profile"))
 
@@ -261,15 +307,26 @@ def upload_avatar():
     saved_name = secure_filename(f.filename)
     if not saved_name or os.path.splitext(saved_name)[1].lower() not in (".png", ".jpg", ".jpeg", ".gif"):
         abort(400)
-    f.save(os.path.join(UPLOAD_DIR, saved_name))
-
-    conn = get_conn()
-    conn.execute(
-        "UPDATE users SET avatar_path = ? WHERE id = ?",
-        (saved_name, u["id"]),
-    )
-    conn.commit()
-    conn.close()
+    extension = os.path.splitext(saved_name)[1].lower()
+    saved_name = f"{u['id']}/avatar{extension}"
+    data = f.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024:
+        abort(413)
+    if not data:
+        abort(400)
+    with closing(get_conn()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        os.makedirs(os.path.join(UPLOAD_DIR, str(u["id"])), exist_ok=True)
+        with open(os.path.join(UPLOAD_DIR, saved_name), "wb") as output:
+            output.write(data)
+        conn.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (saved_name, u["id"]))
+        for suffix in (".png", ".jpg", ".jpeg", ".gif"):
+            old_name = f"{u['id']}/avatar{suffix}"
+            if old_name != saved_name:
+                try:
+                    os.unlink(os.path.join(UPLOAD_DIR, old_name))
+                except FileNotFoundError:
+                    pass
     flash(f"Avatar saved as {saved_name}.", "ok")
     return redirect(url_for("profile"))
 
@@ -288,6 +345,8 @@ def download():
 @app.route("/redirect")
 def go():
     target = request.args.get("url", "/")
+    if not target.startswith("/") or target.startswith("//") or "\\" in target or any(ord(c) < 32 or ord(c) == 127 for c in target):
+        abort(400)
     return redirect(target)
 
 @app.route("/admin")
@@ -301,12 +360,17 @@ def admin_dashboard():
 @admin_required
 def admin_ping():
     host = request.form.get("host", "")
-    out = subprocess.run(
-        f"ping -c 1 {host}", shell=True, capture_output=True, text=True
-    )
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host):
+        abort(400)
+    try:
+        out = subprocess.run(
+            ["ping", "-c", "1", host], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        abort(502)
     return Response(
-        f"<pre>STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}</pre>",
-        mimetype="text/html",
+        f"STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}",
+        mimetype="text/plain",
     )
 
 @app.route("/admin/fetch", methods=["POST"])
@@ -315,9 +379,27 @@ def admin_ping():
 def admin_fetch():
     url = request.form.get("url", "")
     try:
-        body = urlopen(url, timeout=3).read(64 * 1024)
-    except Exception as e:
-        body = f"ERROR: {e}".encode()
+        parsed = urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username is not None or parsed.password is not None or port != (443 if parsed.scheme == "https" else 80):
+            abort(400)
+        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+        if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+            abort(400)
+        address = addresses[0][4][0]
+        connection = (HTTPSConnection if parsed.scheme == "https" else HTTPConnection)(parsed.hostname, port, timeout=3)
+        # Pin the validated address while retaining the hostname for TLS verification.
+        connection._create_connection = lambda *args, **kwargs: socket.create_connection((address, port), timeout=3)
+        try:
+            connection.request("GET", (parsed.path or "/") + ("?" + parsed.query if parsed.query else ""))
+            response = connection.getresponse()
+            if 300 <= response.status < 400:
+                abort(400)
+            body = response.read(64 * 1024)
+        finally:
+            connection.close()
+    except (ValueError, OSError):
+        abort(400)
     return Response(body, mimetype="text/plain")
 
 @app.route("/admin/import-xml", methods=["POST"])
@@ -328,17 +410,12 @@ def admin_import_xml():
     leaked = []
     def _characters(data):
         leaked.append(data)
-    def _resolve_external(ctx, base, sysid, pubid):
-        if sysid.startswith("file:///"):
-            try:
-                with open(sysid[7:], "r", errors="replace") as f:
-                    leaked.append(f.read())
-            except OSError:
-                pass
-        return 1
+    def _reject_entities(*args):
+        raise ValueError("DTD and entities are not supported")
     parser = _ExpatCreate()
     parser.CharacterDataHandler = _characters
-    parser.ExternalEntityRefHandler = _resolve_external
+    parser.StartDoctypeDeclHandler = _reject_entities
+    parser.ExternalEntityRefHandler = _reject_entities
     try:
         parser.Parse(payload.encode(), True)
         note = "".join(leaked).strip()
@@ -353,7 +430,7 @@ def admin_import_xml():
 def admin_restore():
     blob = request.form.get("blob", "")
     try:
-        data = pickle.loads(bytes.fromhex(blob))
+        data = json.loads(blob)
         flash(f"Restored object: {data!r}", "ok")
     except Exception as e:
         flash(f"Restore failed: {e}", "err")
