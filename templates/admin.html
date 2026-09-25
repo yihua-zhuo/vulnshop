@@ -6,25 +6,29 @@
 
   <h3>Network diagnostic (ping)</h3>
   <form method="POST" action="{{ url_for('admin_ping') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
     <input name="host" placeholder="127.0.0.1" size="40">
     <button type="submit">Ping</button>
   </form>
 
   <h3>Fetch URL (server-side)</h3>
   <form method="POST" action="{{ url_for('admin_fetch') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
     <input name="url" placeholder="http://example.com" size="40">
     <button type="submit">Fetch</button>
   </form>
 
   <h3>Import order XML</h3>
   <form method="POST" action="{{ url_for('admin_import_xml') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
     <textarea name="xml" rows="4" style="width:100%">&lt;order&gt;&lt;note&gt;hello&lt;/note&gt;&lt;/order&gt;</textarea>
     <button type="submit">Import</button>
   </form>
 
   <h3>Restore session archive</h3>
   <form method="POST" action="{{ url_for('admin_restore') }}">
-    <input name="blob" placeholder="Archive data" size="60">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input name="blob" placeholder="JSON archive data" size="60">
     <button type="submit">Restore</button>
   </form>
 {% endblock %}

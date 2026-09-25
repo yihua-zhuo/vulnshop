@@ -116,6 +116,8 @@ def favorites():
 def checkout():
     with closing(get_conn()) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
+        if conn.execute('SELECT COUNT(*) FROM purchases WHERE user_id = ?', (g.customer_id,)).fetchone()[0] >= 100:
+            abort(429)
         items = conn.execute(
             'SELECT p.id, p.name, p.price, c.quantity FROM cart_items c '
             'JOIN products p ON p.id = c.product_id WHERE c.user_id = ?', (g.customer_id,),

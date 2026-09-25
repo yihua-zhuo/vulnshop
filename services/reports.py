@@ -17,6 +17,8 @@ def queue_export(conn, user_id, report_id):
 
 
 def update_export(conn, job_id, user_id, report_id):
+    if report_for_owner(conn, report_id, user_id) is None:
+        return 0
     return conn.execute(
         "UPDATE report_exports SET report_id = ? WHERE id = ? AND user_id = ? AND state = 'queued'",
         (report_id, job_id, user_id),
@@ -24,7 +26,7 @@ def update_export(conn, job_id, user_id, report_id):
 
 
 def process_export(conn, job):
-    report = conn.execute('SELECT body FROM reports WHERE id = ?', (job['report_id'],)).fetchone()
+    report = report_for_owner(conn, job['report_id'], job['user_id'])
     if report is None:
         return False
     conn.execute(
@@ -35,16 +37,4 @@ def process_export(conn, job):
 
 
 def may_read_report(conn, user_id, report):
-    decision = conn.execute(
-        "SELECT allowed FROM report_access_cache WHERE user_id = ? AND slug = ? AND expires_at > unixepoch()",
-        (user_id, report['slug']),
-    ).fetchone()
-    if decision is not None:
-        return bool(decision['allowed'])
-    allowed = report['user_id'] == user_id or report['visibility'] == 'public'
-    conn.execute(
-        'INSERT INTO report_access_cache (user_id, slug, allowed, expires_at) VALUES (?, ?, ?, unixepoch() + 60) '
-        'ON CONFLICT(user_id, slug) DO UPDATE SET allowed = excluded.allowed, expires_at = excluded.expires_at',
-        (user_id, report['slug'], int(allowed)),
-    )
-    return allowed
+    return report['user_id'] == user_id or report['visibility'] == 'public'

@@ -2,13 +2,15 @@ import sqlite3
 
 from db import get_conn
 
+ORDERINGS = {key: key for key in ("name", "name ASC", "name DESC", "price", "price ASC", "price DESC", "id", "id ASC", "id DESC")}
+
 
 def save_view(user_id, term, ordering):
     conn = get_conn()
     try:
         cursor = conn.execute(
             "INSERT INTO catalog_views (user_id, term, ordering) VALUES (?, ?, ?)",
-            (user_id, term, ordering),
+            (user_id, term, ORDERINGS.get(ordering, "name")),
         )
         conn.commit()
         return cursor.lastrowid
@@ -27,7 +29,7 @@ def run_view(view_id, user_id):
             return None
         return conn.execute(
             "SELECT id, name, description, price FROM products "
-            "WHERE name LIKE ? OR description LIKE ? ORDER BY " + view["ordering"],
+            "WHERE name LIKE ? OR description LIKE ? ORDER BY " + ORDERINGS.get(view["ordering"], "name"),
             (f"%{view['term']}%", f"%{view['term']}%"),
         ).fetchall()
     except sqlite3.OperationalError:
