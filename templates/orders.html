@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Orders{% endblock %}
+{% block content %}
+<h1>Your orders</h1>
+<p class="muted">Showing your latest 100 orders.</p>
+{% for order in orders %}
+<div class="card">
+  <a href="{{ url_for('storefront.order_detail', oid=order.id) }}">Order #{{ order.id }}</a>
+  <p>{{ order.created_at }} · {{ order.status }} · ${{ '%.2f'|format(order.total_cents / 100) }}</p>
+</div>
+{% else %}<p>No orders yet.</p>{% endfor %}
+{% endblock %}

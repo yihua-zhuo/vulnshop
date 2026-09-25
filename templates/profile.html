@@ -10,6 +10,8 @@
     <form method="POST" action="{{ url_for('profile_update') }}">
       <p><label>Email <input name="email" value="{{ user.email }}"></label></p>
       <p><label>Bio <textarea name="bio" rows="3">{{ user.bio }}</textarea></label></p>
+      <p><label>Preferences (JSON) <textarea name="preferences" rows="2" placeholder='{"display": {"density": "compact"}}'></textarea></label></p>
+      <p class="muted">Account preferences take effect at your next sign-in.</p>
       <button type="submit">Save</button>
     </form>
 

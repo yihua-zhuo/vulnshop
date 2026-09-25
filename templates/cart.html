@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Cart{% endblock %}
+{% block content %}
+<h1>Your cart</h1>
+{% for item in items %}
+<div class="card">
+  <a href="{{ url_for('product', pid=item.id) }}">{{ item.name }}</a>
+  <p>Subtotal: ${{ '%.2f'|format(item.subtotal_cents / 100) }}</p>
+  <form method="post" action="{{ url_for('storefront.update_cart') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input type="hidden" name="product_id" value="{{ item.id }}">
+    <label>Quantity <input type="number" name="quantity" value="{{ item.quantity }}" min="0" max="99" required></label>
+    <button>Update</button>
+  </form>
+</div>
+{% else %}<p>Your cart is empty. <a href="{{ url_for('index') }}">Browse products</a>.</p>{% endfor %}
+{% if items %}
+<p>Set a quantity to zero to remove an item.</p>
+<p><strong>Total: ${{ '%.2f'|format(total_cents / 100) }}</strong></p>
+<p>Place an order for review. No payment is collected.</p>
+<form method="post" action="{{ url_for('storefront.checkout') }}">
+  <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+  <button>Place order</button>
+</form>
+{% endif %}
+{% endblock %}

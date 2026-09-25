@@ -5,12 +5,25 @@
   <p>${{ product.price }}</p>
   <p>{{ product.description }}</p>
 
+  {% if user %}
+  <form method="post" action="{{ url_for('storefront.update_cart') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input type="hidden" name="product_id" value="{{ product.id }}">
+    <label>Quantity <input type="number" name="quantity" min="1" max="99" value="1" required></label>
+    <button>Set cart quantity</button>
+  </form>
+  <form method="post" action="{{ url_for('storefront.favorites') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input type="hidden" name="product_id" value="{{ product.id }}">
+    <button name="action" value="add">Save to favorites</button>
+  </form>
+  {% endif %}
   <h3>Reviews</h3>
   {% for c in comments %}
     <div class="comment">
       <b>{{ c.username }}</b>
       <span class="muted">{{ c.created_at }}</span>
-      <div>{{ c.content|safe }}</div>
+      <div>{{ c.content }}</div>
     </div>
   {% endfor %}
 

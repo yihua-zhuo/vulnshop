@@ -1,11 +1,9 @@
 import sqlite3
 import os
-import hashlib
+import secrets
+from werkzeug.security import generate_password_hash
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "vulnshop.db")
-
-DB_ADMIN_USER = "admin"
-DB_ADMIN_PASSWORD = "P@ssw0rd_2024!"
+DB_PATH = os.environ.get("SHOP_DB_PATH") or os.path.join(os.path.dirname(__file__), "data", "shop.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -19,6 +17,14 @@ def init_db():
 
     cur.executescript(
         """
+        DROP TABLE IF EXISTS report_access_cache;
+        DROP TABLE IF EXISTS report_exports;
+        DROP TABLE IF EXISTS reports;
+        DROP TABLE IF EXISTS purchase_items;
+        DROP TABLE IF EXISTS purchases;
+        DROP TABLE IF EXISTS cart_items;
+        DROP TABLE IF EXISTS favorites;
+        DROP TABLE IF EXISTS catalog_views;
         DROP TABLE IF EXISTS users;
         DROP TABLE IF EXISTS products;
         DROP TABLE IF EXISTS comments;
@@ -31,7 +37,68 @@ def init_db():
             email TEXT,
             bio TEXT,
             avatar_path TEXT,
+            preferences TEXT NOT NULL DEFAULT '{}',
             is_admin INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            visibility TEXT NOT NULL CHECK(visibility IN ('public', 'private')),
+            UNIQUE(user_id, slug)
+        );
+        CREATE TABLE report_exports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            report_id INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('queued', 'ready')),
+            output TEXT
+        );
+        CREATE TABLE report_access_cache (
+            user_id INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY(user_id, slug)
+        );
+
+        CREATE TABLE cart_items (
+            user_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 99),
+            PRIMARY KEY (user_id, product_id)
+        );
+        CREATE TABLE favorites (
+            user_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, product_id)
+        );
+        CREATE TABLE purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            total_cents INTEGER NOT NULL CHECK(total_cents >= 0),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'cancelled')),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX purchases_by_user ON purchases(user_id, id);
+        CREATE TABLE purchase_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            unit_cents INTEGER NOT NULL CHECK(unit_cents >= 0),
+            quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 99)
+        );
+        CREATE INDEX items_by_purchase ON purchase_items(purchase_id);
+
+        CREATE TABLE catalog_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            term TEXT NOT NULL,
+            ordering TEXT NOT NULL
         );
 
         CREATE TABLE products (
@@ -58,11 +125,8 @@ def init_db():
         """
     )
 
-    def weak_hash(pw: str) -> str:
-        return hashlib.md5(pw.encode()).hexdigest()
-
     seed_users = [
-        ("admin",   "admin123",       "[email protected]",  "Site administrator", 1),
+        ("admin",   os.environ.get("SHOP_ADMIN_PASSWORD") or secrets.token_urlsafe(24),       "[email protected]",  "Site administrator", 1),
         ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
         ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
         ("charlie", "password",       "[email protected]", "Charlie",             0),
@@ -71,8 +135,13 @@ def init_db():
         cur.execute(
             "INSERT INTO users (username, password_hash, email, bio, is_admin) "
             "VALUES (?, ?, ?, ?, ?)",
-            (username, weak_hash(pw), email, bio, is_admin),
+            (username, generate_password_hash(pw), email, bio, is_admin),
         )
+
+    cur.execute(
+        "INSERT INTO reports (user_id, slug, title, body, visibility) VALUES (1, ?, ?, ?, 'private')",
+        ('quarterly-plan', 'Quarterly purchasing plan', 'Internal reference: ' + secrets.token_hex(24)),
+    )
 
     seed_products = [
         ("Vintage Camera", "A retro film camera in great condition.", 199.0),
@@ -97,4 +166,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print(f"[+] Database initialized at {DB_PATH}")
-    print(f"[!] Hardcoded admin password in source: {DB_ADMIN_PASSWORD}")

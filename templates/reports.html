@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<h1>Reports</h1>
+<h2>Create report</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+  <p><label>Reference <input name="slug" maxlength="48" pattern="[a-z0-9][a-z0-9-]{0,47}" required></label></p>
+  <p><label>Title <input name="title" maxlength="100" required></label></p>
+  <p><label>Content <textarea name="body" maxlength="8000" rows="4"></textarea></label></p>
+  <button>Create private report</button>
+</form>
+<h2>Your reports</h2>
+{% for report in owned %}
+<div class="card">
+  <a href="{{ url_for('reports.detail', rid=report.id) }}">{{ report.title }}</a>
+  <form method="post" action="{{ url_for('reports.create_export') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input type="hidden" name="report_id" value="{{ report.id }}">
+    <button>Queue export</button>
+  </form>
+</div>
+{% else %}<p>No reports yet.</p>{% endfor %}
+<h2>Export queue</h2>
+{% for job in jobs %}
+<p><a href="{{ url_for('reports.export_detail', jid=job.id) }}">Export #{{ job.id }}</a> · {{ job.state }}</p>
+{% else %}<p>No exports yet.</p>{% endfor %}
+<h2>Report directory</h2>
+<p class="muted">Titles and references are listed for discovery. Report contents require access.</p>
+{% for report in directory %}
+<div class="card"><a href="{{ url_for('reports.detail', rid=report.id) }}">{{ report.title }}</a> · {{ report.slug }} · Account {{ report.user_id }}</div>
+{% endfor %}
+{% endblock %}

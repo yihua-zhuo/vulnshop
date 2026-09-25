@@ -2,32 +2,36 @@ import os
 import pickle
 import subprocess
 import sqlite3
-import hashlib
-import xml.etree.ElementTree as ET
+import secrets
 
 from xml.parsers.expat import ParserCreate as _ExpatCreate
 from urllib.request import urlopen
-from urllib.parse import urlparse
 
 from flask import (
     Flask, request, redirect, url_for, session,
-    render_template, render_template_string, abort,
+    render_template, abort,
     flash, send_from_directory, Response,
 )
 
-from db import get_conn, init_db, DB_PATH
+from db import get_conn, init_db
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from services.accounts import preferences, session_identity
+from services.catalog import save_view, run_view
+from services.assets import asset_path
+from services.storefront import storefront
+from services.report_routes import reports
 
 app = Flask(__name__)
+app.register_blueprint(storefront)
+app.register_blueprint(reports)
 
-app.secret_key = "secret123"
+app.secret_key = os.environ.get("SHOP_SECRET_KEY") or secrets.token_hex(32)
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "files")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-def weak_hash(pw: str) -> str:
-    return hashlib.md5(pw.encode()).hexdigest()
 
 def current_user():
     return session.get("user")
@@ -51,12 +55,6 @@ def admin_required(view):
         return view(*args, **kwargs)
     return wrapped
 
-@app.template_filter("unsafe")
-def unsafe_filter(s):
-    if s is None:
-        return ""
-    return str(s)
-
 @app.route("/")
 def index():
     conn = get_conn()
@@ -77,7 +75,7 @@ def register():
             conn.execute(
                 "INSERT INTO users (username, password_hash, email, bio) "
                 "VALUES (?, ?, ?, ?)",
-                (username, weak_hash(password), email, bio),
+                (username, generate_password_hash(password), email, bio),
             )
             conn.commit()
             flash("Account created. Please log in.", "ok")
@@ -95,15 +93,13 @@ def login():
         password = request.form.get("password", "")
 
         conn = get_conn()
-        query = (
-            f"SELECT * FROM users WHERE username = '{username}' "
-            f"AND password_hash = '{weak_hash(password)}'"
-        )
-        row = conn.execute(query).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         conn.close()
 
-        if row:
-            session["user"] = dict(row)
+        if row and check_password_hash(row["password_hash"], password):
+            session.clear()
+            session["_customer_id"] = row["id"]
+            session["user"] = session_identity(row)
             flash(f"Welcome back, {row['username']}!", "ok")
             return redirect(url_for("index"))
         flash("Invalid credentials.", "err")
@@ -111,35 +107,36 @@ def login():
 
 @app.route("/logout")
 def logout():
-    session.pop("user", None)
+    session.clear()
     return redirect(url_for("index"))
 
 @app.route("/search")
 def search():
     q = request.args.get("q", "")
-    results = []
-    if q:
-        conn = get_conn()
-        query = f"SELECT id, name, description, price FROM products " \
-                f"WHERE name LIKE '%{q}%' OR description LIKE '%{q}%'"
-        try:
-            results = conn.execute(query).fetchall()
-        except sqlite3.OperationalError as e:
-            return Response(f"SQL error: {e}", mimetype="text/plain"), 500
+    conn = get_conn()
+    try:
+        results = conn.execute(
+            "SELECT id, name, description, price FROM products WHERE name LIKE ? OR description LIKE ?",
+            (f"%{q}%", f"%{q}%"),
+        ).fetchall() if q else []
+    finally:
         conn.close()
+    return render_template("search.html", q=q, results=results, user=current_user())
 
-    html = render_template_string(
-        "{% extends 'base.html' %}"
-        "{% block content %}"
-        "<h2>Search results for: {{ q|safe }}</h2>"
-        "<p>{{ results|length }} match(es).</p>"
-        "<ul>"
-        "{% for r in results %}<li><b>{{ r.name }}</b> — {{ r.description }} (${{ r.price }})</li>{% endfor %}"
-        "</ul>"
-        "{% endblock %}",
-        q=q, results=results,
-    )
-    return html
+@app.route("/catalog/views", methods=["POST"])
+@login_required
+def save_catalog_view():
+    view_id = save_view(current_user()["id"], request.form.get("q", ""),
+                        request.form.get("ordering", "name"))
+    return redirect(url_for("catalog_view", view_id=view_id))
+
+@app.route("/catalog/views/<int:view_id>")
+@login_required
+def catalog_view(view_id):
+    results = run_view(view_id, current_user()["id"])
+    if results is None:
+        abort(404)
+    return render_template("search.html", q="Saved view", results=results, user=current_user())
 
 @app.route("/product/<int:pid>")
 def product(pid):
@@ -199,11 +196,19 @@ def profile_update():
     if not u:
         return redirect(url_for("login"))
 
-    _WHITELIST = ("bio", "email", "is_admin")
+    _WHITELIST = ("bio", "email", "preferences")
     updates = {k: v for k, v in request.form.items() if k in _WHITELIST}
     if not updates:
         flash("Nothing to update.", "err")
         return redirect(url_for("profile"))
+
+    if "preferences" in updates:
+        try:
+            settings = preferences(updates["preferences"])
+            if not isinstance(settings.get("account", {}), dict):
+                raise ValueError("Invalid account settings")
+        except (ValueError, TypeError):
+            abort(400)
 
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [u["id"]]
@@ -215,7 +220,8 @@ def profile_update():
 
     row = dict(u)
     for k, v in updates.items():
-        row[k] = int(v) if k == "is_admin" else v
+        if k in ("bio", "email"):
+            row[k] = v
     session["user"] = row
     flash("Profile updated.", "ok")
     return redirect(url_for("profile"))
@@ -252,7 +258,9 @@ def upload_avatar():
         flash("No file.", "err")
         return redirect(url_for("profile"))
 
-    saved_name = f.filename
+    saved_name = secure_filename(f.filename)
+    if not saved_name or os.path.splitext(saved_name)[1].lower() not in (".png", ".jpg", ".jpeg", ".gif"):
+        abort(400)
     f.save(os.path.join(UPLOAD_DIR, saved_name))
 
     conn = get_conn()
@@ -268,9 +276,13 @@ def upload_avatar():
 @app.route("/download")
 def download():
     name = request.args.get("file", "")
-    full = os.path.join(DOWNLOAD_DIR, name)
-    with open(full, "rb") as fh:
-        data = fh.read()
+    try:
+        full = asset_path(DOWNLOAD_DIR, name)
+        data = full.read_bytes()
+    except ValueError:
+        abort(400)
+    except OSError:
+        abort(404)
     return Response(data, mimetype="application/octet-stream")
 
 @app.route("/redirect")
@@ -359,4 +371,4 @@ def add_headers(resp):
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)

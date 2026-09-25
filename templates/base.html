@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>VulnShop — {% block title %}Demo{% endblock %}</title>
+  <title>Everyday Shop — {% block title %}Demo{% endblock %}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     header { border-bottom: 2px solid #eee; padding-bottom: 0.5rem; margin-bottom: 1rem; }
@@ -19,10 +19,14 @@
 </head>
 <body>
   <header>
-    <strong>VulnShop</strong>
+    <strong>Everyday Shop</strong>
     <a href="{{ url_for('index') }}">Home</a>
     <a href="{{ url_for('search') }}">Search</a>
     {% if user %}
+      <a href="{{ url_for('storefront.cart') }}">Cart</a>
+      <a href="{{ url_for('storefront.favorites') }}">Favorites</a>
+      <a href="{{ url_for('storefront.orders') }}">Orders</a>
+      <a href="{{ url_for('reports.index') }}">Reports</a>
       <a href="{{ url_for('profile') }}">{{ user.username }}</a>
       {% if user.is_admin %}<a href="{{ url_for('admin_dashboard') }}">Admin</a>{% endif %}
       <a href="{{ url_for('logout') }}">Logout</a>

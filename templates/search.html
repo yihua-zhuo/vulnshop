@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Search results for: {{ q }}</h2>
+<form action="{{ url_for('search') }}">
+  <input name="q" value="{{ q }}"><button>Search</button>
+</form>
+<p>{{ results|length }} match(es).</p>
+<ul>{% for r in results %}<li><b>{{ r.name }}</b> — {{ r.description }} (${{ r.price }})</li>{% endfor %}</ul>
+{% if user %}
+<form method="post" action="{{ url_for('save_catalog_view') }}">
+  <input type="hidden" name="q" value="{{ q }}">
+  <select name="ordering"><option value="name">Name</option><option value="price">Price</option></select>
+  <button>Save and open view</button>
+</form>
+{% endif %}
+{% endblock %}

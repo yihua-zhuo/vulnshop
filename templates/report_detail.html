@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ report.title }}{% endblock %}
+{% block content %}
+<h1>{{ report.title }}</h1>
+<p>{{ report.slug }} · {{ report.visibility }}</p>
+<pre style="white-space:pre-wrap">{{ report.body }}</pre>
+<p><a href="{{ url_for('reports.index') }}">Back to reports</a></p>
+{% endblock %}

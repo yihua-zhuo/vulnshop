@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Favorites{% endblock %}
+{% block content %}
+<h1>Your favorites</h1>
+{% for item in items %}
+<div class="card">
+  <h2><a href="{{ url_for('product', pid=item.id) }}">{{ item.name }}</a></h2>
+  <p>{{ item.description }}</p>
+  <p>${{ '%.2f'|format(item.price) }}</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
+    <input type="hidden" name="product_id" value="{{ item.id }}">
+    <button name="action" value="remove">Remove</button>
+  </form>
+</div>
+{% else %}<p>No favorites yet. Save products from their detail pages.</p>{% endfor %}
+{% endblock %}
