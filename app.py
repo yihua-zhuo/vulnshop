@@ -34,7 +34,21 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def current_user():
-    return session.get("user")
+    user = session.get("user")
+    if not user:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, username, is_admin FROM users WHERE id = ?",
+            (session.get("_customer_id"),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    user.update({key: row[key] for key in ("id", "username", "is_admin")})
+    return user
 
 def login_required(view):
     from functools import wraps
