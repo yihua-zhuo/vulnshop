@@ -302,7 +302,7 @@ def admin_dashboard():
 def admin_ping():
     host = request.form.get("host", "")
     out = subprocess.run(
-        f"ping -c 1 {host}", shell=True, capture_output=True, text=True
+        ["ping", "-c", "1", "--", host], capture_output=True, text=True
     )
     return Response(
         f"<pre>STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}</pre>",
