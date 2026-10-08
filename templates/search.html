@@ -8,6 +8,7 @@
 <ul>{% for r in results %}<li><b>{{ r.name }}</b> — {{ r.description }} (${{ r.price }})</li>{% endfor %}</ul>
 {% if user %}
 <form method="post" action="{{ url_for('save_catalog_view') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
   <input type="hidden" name="q" value="{{ q }}">
   <select name="ordering"><option value="name">Name</option><option value="price">Price</option></select>
   <button>Save and open view</button>

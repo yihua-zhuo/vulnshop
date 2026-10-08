@@ -4,6 +4,7 @@ from db import get_conn
 
 
 def save_view(user_id, term, ordering):
+    ordering = ordering if ordering in ("name", "price") else "name"
     conn = get_conn()
     try:
         cursor = conn.execute(
@@ -27,7 +28,7 @@ def run_view(view_id, user_id):
             return None
         return conn.execute(
             "SELECT id, name, description, price FROM products "
-            "WHERE name LIKE ? OR description LIKE ? ORDER BY " + view["ordering"],
+            "WHERE name LIKE ? OR description LIKE ? ORDER BY " + (view["ordering"] if view["ordering"] in ("name", "price") else "name"),
             (f"%{view['term']}%", f"%{view['term']}%"),
         ).fetchall()
     except sqlite3.OperationalError:

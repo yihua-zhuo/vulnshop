@@ -46,7 +46,6 @@ def detail(rid):
         report = conn.execute('SELECT * FROM reports WHERE id = ?', (identifier(rid),)).fetchone()
         if report is None:
             abort(404)
-        # Commit both positive and negative cache decisions before returning.
         allowed = may_read_report(conn, g.customer_id, report)
     if not allowed:
         abort(403)
@@ -80,7 +79,8 @@ def export_detail(jid):
                 rid = integer_field('report_id', 1, 2147483647)
                 if conn.execute('SELECT id FROM reports WHERE id = ?', (rid,)).fetchone() is None:
                     abort(404)
-                update_export(conn, jid, g.customer_id, rid)
+                if not update_export(conn, jid, g.customer_id, rid):
+                    abort(403)
             elif action == 'run':
                 if not process_export(conn, job):
                     abort(409)

@@ -8,6 +8,7 @@
   {% if user and user.id == target.id %}
     <h3>Update profile</h3>
     <form method="POST" action="{{ url_for('profile_update') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
       <p><label>Email <input name="email" value="{{ user.email }}"></label></p>
       <p><label>Bio <textarea name="bio" rows="3">{{ user.bio }}</textarea></label></p>
       <p><label>Preferences (JSON) <textarea name="preferences" rows="2" placeholder='{"display": {"density": "compact"}}'></textarea></label></p>
@@ -17,12 +18,14 @@
 
     <h3>Upload avatar</h3>
     <form method="POST" action="{{ url_for('upload_avatar') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
       <input type="file" name="avatar">
       <button type="submit">Upload</button>
     </form>
 
     <h3>Transfer funds</h3>
     <form method="POST" action="{{ url_for('transfer') }}">
+    <input type="hidden" name="csrf_token" value="{{ shopping_csrf() }}">
       <p><label>To user id <input name="to" value="4"></label></p>
       <p><label>Amount <input name="amount" value="10"></label></p>
       <button type="submit">Send</button>
