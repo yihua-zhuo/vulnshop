@@ -127,9 +127,6 @@ def init_db():
 
     seed_users = [
         ("admin",   os.environ.get("SHOP_ADMIN_PASSWORD") or secrets.token_urlsafe(24),       "[email protected]",  "Site administrator", 1),
-        ("alice",   "alice2024",      "[email protected]", "Hi I'm Alice",        0),
-        ("bob",     "bob",            "[email protected]",    "Bob's bio",           0),
-        ("charlie", "password",       "[email protected]", "Charlie",             0),
     ]
     for username, pw, email, bio, is_admin in seed_users:
         cur.execute(
@@ -154,11 +151,6 @@ def init_db():
             "INSERT INTO products (name, description, price) VALUES (?, ?, ?)",
             (name, desc, price),
         )
-
-    cur.execute(
-        "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)",
-        (2, 1000.0, "paid"),
-    )
 
     conn.commit()
     conn.close()
